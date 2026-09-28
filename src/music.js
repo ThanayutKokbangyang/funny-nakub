@@ -27,6 +27,40 @@ function buildEvents() {
   return ev.sort((a, b) => a[0] - b[0]);
 }
 
+// iPhone: ถ้าเปิดโหมดเงียบ (สวิตช์ข้างเครื่อง) Web Audio จะถูกปิดเสียง
+// วิธีแก้: บอก iOS ว่าเป็นการ "เล่นสื่อ" เหมือนดูวิดีโอ แล้วเล่นไฟล์เสียงเงียบๆ วนไว้เบื้องหลัง
+let unlockEl = null;
+function silentWavUrl() {
+  const rate = 8000, samples = rate / 2; // เงียบ 0.5 วินาที
+  const buf = new ArrayBuffer(44 + samples);
+  const v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + samples, true); w(8, "WAVE");
+  w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  w(36, "data"); v.setUint32(40, samples, true);
+  for (let i = 0; i < samples; i++) v.setUint8(44 + i, 128);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+function unlockIOSAudio() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = "playback"; // Safari 16.4+
+  } catch { /* ไม่รองรับก็ข้าม */ }
+  try {
+    if (!unlockEl) {
+      unlockEl = document.createElement("audio");
+      unlockEl.src = silentWavUrl();
+      unlockEl.loop = true;
+      unlockEl.setAttribute("playsinline", "");
+      unlockEl.setAttribute("x-webkit-airplay", "deny");
+      unlockEl.style.display = "none";
+      document.body.appendChild(unlockEl);
+    }
+    const pr = unlockEl.play();
+    if (pr && pr.catch) pr.catch(() => {});
+  } catch { /* ข้าม */ }
+}
+
 export function createMusic() {
   const ev = buildEvents();
   let ctx, master, noiseBuf, timer = null;
@@ -44,11 +78,13 @@ export function createMusic() {
     [o, o2].forEach((x) => { x.start(time); x.stop(time + len + .3); });
   };
   const bass = (freq, time, len) => {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = "triangle"; o.frequency.value = freq;
-    g.gain.setValueAtTime(.5, time);
+    // sawtooth + lowpass มีฮาร์โมนิกเยอะ ลำโพงมือถือเล็กๆ ก็ยังได้ยิน
+    const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    o.type = "sawtooth"; o.frequency.value = freq;
+    f.type = "lowpass"; f.frequency.value = 900; f.Q.value = 2;
+    g.gain.setValueAtTime(.32, time);
     g.gain.exponentialRampToValueAtTime(.0001, time + len);
-    o.connect(g).connect(master); o.start(time); o.stop(time + len + .05);
+    o.connect(f).connect(g).connect(master); o.start(time); o.stop(time + len + .05);
   };
   const kick = (time) => {
     const o = ctx.createOscillator(), g = ctx.createGain();
@@ -96,16 +132,21 @@ export function createMusic() {
   }
 
   function start() {
+    unlockIOSAudio();
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
       ctx = new AC();
-      master = ctx.createGain(); master.gain.value = .22;
+      master = ctx.createGain(); master.gain.value = .4;
       const comp = ctx.createDynamicsCompressor();
       master.connect(comp).connect(ctx.destination);
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate * .5, ctx.sampleRate);
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      // สลับแอปแล้วกลับมา (เช่นไปตอบแชทแล้วกลับมา) ให้เพลงเล่นต่อ
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && on) { ctx.resume(); if (unlockEl) unlockEl.play().catch(() => {}); }
+      });
     }
     ctx.resume();
     if (!on) { on = true; restart(ctx.currentTime + .08); }
@@ -114,6 +155,7 @@ export function createMusic() {
   function stop() {
     on = false; clearInterval(timer);
     if (ctx) ctx.suspend();
+    if (unlockEl) unlockEl.pause();
   }
   function celebrate() {
     if (!start()) return;
