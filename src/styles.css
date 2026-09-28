@@ -5,12 +5,10 @@
   --ink: #3b2a2a;
   --soft: #8c7474;
   --yes: #ff6b8b;
+  color-scheme: only light; /* ใช้ธีมสว่างเสมอ แม้มือถือจะเปิดโหมดมืด */
   box-sizing: border-box;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #2b2235; --dot: #3a2f48; --card: #fff8ec; }
 }
 *, *::before, *::after { box-sizing: inherit; }
 html, body { height: 100%; margin: 0; }
